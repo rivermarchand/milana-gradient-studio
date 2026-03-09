@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gradient Illustration 2</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; display: flex; justify-content: center; align-items: center; min-height: 100vh; overflow: hidden; }
+canvas { width: 70vw; height: 39.8vw; max-height: 70vh; max-width: 123.11vh; border-radius: 24px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl');
+if (!gl) alert('WebGL not supported');
+
+canvas.width = 1920;
+canvas.height = 1090;
+
+const vsrc = `
+attribute vec2 a_pos;
+void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
+`;
+
+const fsrc = `
+precision highp float;
+uniform vec2 u_res;
+uniform float u_time;
+uniform vec2 u_mouse;
+
+vec4 bandGrad(float t, float altStops) {
+    vec3 pinkC = vec3(0.996, 0.251, 0.769);
+    vec3 yellowC = vec3(0.933, 1.0, 0.463);
+
+    vec4 c0 = vec4(pinkC, 0.0);
+    vec4 c1 = vec4(pinkC, 0.5);
+    vec4 c2 = vec4(yellowC, 1.0);
+    vec4 c3 = vec4(yellowC, 0.827);
+    vec4 c4 = vec4(pinkC, 0.5);
+    vec4 c5 = vec4(pinkC, 0.0);
+
+    float s2 = mix(0.36058, 0.30769, altStops);
+    float s3 = mix(0.59615, 0.66346, altStops);
+
+    if (t < 0.14423) return mix(c0, c1, t / 0.14423);
+    if (t < s2) return mix(c1, c2, (t - 0.14423) / (s2 - 0.14423));
+    if (t < s3) return mix(c2, c3, (t - s2) / (s3 - s2));
+    if (t < 0.81731) return mix(c3, c4, (t - s3) / (0.81731 - s3));
+    return mix(c4, c5, clamp((t - 0.81731) / (1.0 - 0.81731), 0.0, 1.0));
+}
+
+// Mouse strength — wide, soft falloff for organic feel
+float mStr(float colCX, float colCY) {
+    vec2 colCenter = vec2(colCX, colCY);
+    float dist = length((u_mouse - colCenter) / u_res);
+    // Cubic ease-out falloff over a large radius
+    float t = 1.0 - smoothstep(0.0, 0.65, dist);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+void main() {
+    vec2 pos = gl_FragCoord.xy;
+    pos.y = u_res.y - pos.y;
+
+    vec3 bg = vec3(0.992, 0.243, 0.518);
+    vec3 color = bg;
+
+    // Base column properties: width, height, y-origin, phase, flip, alt
+    // col0: 469x359  y=363  phase=0.0  flip=0 alt=0
+    // col1: 256x758  y=176  phase=1.2  flip=0 alt=0
+    // col2: 470x1080 y=5    phase=4.8  flip=0 alt=1
+    // col3: 256x758  y=176  phase=3.6  flip=1 alt=0
+    // col4: 469x359  y=388  phase=2.4  flip=1 alt=0
+
+    float bw0=469., bw1=256., bw2=470., bw3=256., bw4=469.;
+    float bh0=359., bh1=758., bh2=1080., bh3=758., bh4=359.;
+    float by0=363., by1=176., by2=5.,    by3=176., by4=388.;
+    float ph0=0.,   ph1=1.2,  ph2=4.8,   ph3=3.6,  ph4=2.4;
+
+    // Base column center positions
+    float bcx0=234.5,  bcx1=597.,  bcx2=960.,  bcx3=1323., bcx4=1685.5;
+    float bcy0=542.5,  bcy1=555.,  bcy2=545.,  bcy3=555.,  bcy4=567.5;
+
+    // Mouse strength per column
+    float m0 = mStr(bcx0, bcy0);
+    float m1 = mStr(bcx1, bcy1);
+    float m2 = mStr(bcx2, bcy2);
+    float m3 = mStr(bcx3, bcy3);
+    float m4 = mStr(bcx4, bcy4);
+
+    // X-scale: breathing + mouse
+    float breath0 = sin(u_time * 0.31) * 0.14 + sin(u_time * 0.53 + 2.1) * 0.08 + sin(u_time * 0.17 + 0.8) * 0.05;
+    float breath1 = sin(u_time * 0.37 + 1.0) * 0.14 + sin(u_time * 0.61 + 4.3) * 0.08 + sin(u_time * 0.19 + 3.1) * 0.05;
+    float breath2 = sin(u_time * 0.29 + 2.5) * 0.14 + sin(u_time * 0.47 + 0.7) * 0.08 + sin(u_time * 0.22 + 5.4) * 0.05;
+    float breath3 = sin(u_time * 0.41 + 3.8) * 0.14 + sin(u_time * 0.59 + 2.9) * 0.08 + sin(u_time * 0.14 + 1.6) * 0.05;
+    float breath4 = sin(u_time * 0.34 + 5.2) * 0.14 + sin(u_time * 0.51 + 1.4) * 0.08 + sin(u_time * 0.21 + 4.0) * 0.05;
+
+    // Mouse: expand hovered column hard, squeeze others
+    float maxM = max(max(max(m0, m1), max(m2, m3)), m4);
+    float squeeze0 = maxM * (1.0 - m0) * 0.45;
+    float squeeze1 = maxM * (1.0 - m1) * 0.45;
+    float squeeze2 = maxM * (1.0 - m2) * 0.45;
+    float squeeze3 = maxM * (1.0 - m3) * 0.45;
+    float squeeze4 = maxM * (1.0 - m4) * 0.45;
+
+    float xs0 = 1.0 + breath0 + m0 * 0.9 - squeeze0;
+    float xs1 = 1.0 + breath1 + m1 * 0.9 - squeeze1;
+    float xs2 = 1.0 + breath2 + m2 * 0.9 - squeeze2;
+    float xs3 = 1.0 + breath3 + m3 * 0.9 - squeeze3;
+    float xs4 = 1.0 + breath4 + m4 * 0.9 - squeeze4;
+
+    // Normalize so total width = 1920
+    float totalW = bw0*xs0 + bw1*xs1 + bw2*xs2 + bw3*xs3 + bw4*xs4;
+    float norm = 1920.0 / totalW;
+
+    float w0 = bw0*xs0*norm;
+    float w1 = bw1*xs1*norm;
+    float w2 = bw2*xs2*norm;
+    float w3 = bw3*xs3*norm;
+    float w4 = bw4*xs4*norm;
+
+    // Column x positions (left edges)
+    float x0 = 0.0;
+    float x1 = w0;
+    float x2 = w0 + w1;
+    float x3 = w0 + w1 + w2;
+    float x4 = w0 + w1 + w2 + w3;
+
+    // Determine which column this pixel is in
+    float colX = 0.0;   // left edge of our column
+    float colW = 0.0;   // width of our column
+    float colBH = 0.0;  // base height
+    float colBY = 0.0;  // base y origin
+    float colPh = 0.0;  // phase
+    float colFlip = 0.0;
+    float colAlt = 0.0;
+    float colM = 0.0;   // mouse strength
+
+    if (pos.x < x1) {
+        colX=x0; colW=w0; colBH=bh0; colBY=by0; colPh=ph0; colFlip=0.; colAlt=0.; colM=m0;
+    } else if (pos.x < x2) {
+        colX=x1; colW=w1; colBH=bh1; colBY=by1; colPh=ph1; colFlip=0.; colAlt=0.; colM=m1;
+    } else if (pos.x < x3) {
+        colX=x2; colW=w2; colBH=bh2; colBY=by2; colPh=ph2; colFlip=0.; colAlt=1.; colM=m2;
+    } else if (pos.x < x4) {
+        colX=x3; colW=w3; colBH=bh3; colBY=by3; colPh=ph3; colFlip=1.; colAlt=0.; colM=m3;
+    } else {
+        colX=x4; colW=w4; colBH=bh4; colBY=by4; colPh=ph4; colFlip=1.; colAlt=0.; colM=m4;
+    }
+
+    // Y-axis breathing (uses same phase offsets but different speeds than X)
+    float yScale = 1.0 + sin(u_time * 0.26 + colPh * 2.3) * 0.15
+                       + sin(u_time * 0.43 + colPh * 0.9 + 1.7) * 0.09
+                       + sin(u_time * 0.15 + colPh * 3.1 + 4.2) * 0.06
+                       + colM * 0.4;
+
+    float scaledH = colBH * yScale;
+    float colCY = colBY + colBH * 0.5;
+    float scaledY = colCY - scaledH * 0.5;
+
+    // Check if we're inside this column's vertical range
+    float uy = (pos.y - scaledY) / scaledH;
+
+    if (uy >= 0.0 && uy <= 1.0) {
+        float t = uy;
+        if (colFlip > 0.5) t = 1.0 - t;
+
+        vec4 grad = bandGrad(t, colAlt);
+        color = grad.rgb * grad.a + color * (1.0 - grad.a);
+    }
+
+    gl_FragColor = vec4(color, 1.0);
+}
+`;
+
+function createShader(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(s));
+        return null;
+    }
+    return s;
+}
+
+const vs = createShader(gl.VERTEX_SHADER, vsrc);
+const fs = createShader(gl.FRAGMENT_SHADER, fsrc);
+const prog = gl.createProgram();
+gl.attachShader(prog, vs);
+gl.attachShader(prog, fs);
+gl.linkProgram(prog);
+
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(prog));
+}
+
+gl.useProgram(prog);
+
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+
+const aPos = gl.getAttribLocation(prog, 'a_pos');
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+const uRes = gl.getUniformLocation(prog, 'u_res');
+const uTime = gl.getUniformLocation(prog, 'u_time');
+const uMouse = gl.getUniformLocation(prog, 'u_mouse');
+
+gl.uniform2f(uRes, canvas.width, canvas.height);
+gl.viewport(0, 0, canvas.width, canvas.height);
+
+// Two-stage smoothing: target → mid → final for long, organic trailing
+let mouseX = canvas.width * 0.5;
+let mouseY = canvas.height * 0.5;
+let midX = mouseX;
+let midY = mouseY;
+let targetX = mouseX;
+let targetY = mouseY;
+let mouseOnCanvas = false;
+
+canvas.addEventListener('mousemove', (e) => {
+    mouseOnCanvas = true;
+    const rect = canvas.getBoundingClientRect();
+    targetX = (e.clientX - rect.left) / rect.width * canvas.width;
+    targetY = (e.clientY - rect.top) / rect.height * canvas.height;
+});
+
+canvas.addEventListener('mouseleave', () => {
+    mouseOnCanvas = false;
+});
+
+function getWanderPos(t) {
+    const cx = canvas.width * 0.5;
+    const cy = canvas.height * 0.5;
+    const rx = canvas.width * 0.4;
+    const ry = canvas.height * 0.4;
+    return {
+        x: cx + Math.sin(t * 0.23) * rx * 0.6 + Math.sin(t * 0.41 + 1.3) * rx * 0.3,
+        y: cy + Math.sin(t * 0.19 + 2.0) * ry * 0.6 + Math.cos(t * 0.37 + 0.7) * ry * 0.3
+    };
+}
+
+function render(time) {
+    const t = time * 0.001;
+
+    if (!mouseOnCanvas) {
+        const wander = getWanderPos(t);
+        targetX = wander.x;
+        targetY = wander.y;
+    }
+
+    // First stage: mid chases target
+    midX += (targetX - midX) * 0.04;
+    midY += (targetY - midY) * 0.04;
+
+    // Second stage: final chases mid — creates long organic trail
+    mouseX += (midX - mouseX) * 0.035;
+    mouseY += (midY - mouseY) * 0.035;
+
+    gl.uniform1f(uTime, t);
+    gl.uniform2f(uMouse, mouseX, mouseY);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+}
+
+requestAnimationFrame(render);
+</script>
+</body>
+</html>

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gradient Illustration 4</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; display: flex; justify-content: center; align-items: center; min-height: 100vh; overflow: hidden; }
+canvas { width: 70vw; height: 39.8vw; max-height: 70vh; max-width: 123.11vh; border-radius: 24px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl');
+if (!gl) alert('WebGL not supported');
+
+canvas.width = 1920;
+canvas.height = 1080;
+
+const vsrc = `
+attribute vec2 a_pos;
+void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
+`;
+
+const fsrc = `
+precision highp float;
+uniform vec2 u_res;
+uniform float u_time;
+uniform vec2 u_mouse;
+
+// Column base width: cycles [43, 42, 43] per group of 3
+float getBaseW(float fi) {
+    float off = fi - floor(fi / 3.0) * 3.0;
+    if (off > 0.5 && off < 1.5) return 42.0;
+    return 43.0;
+}
+
+// Column base center X (analytical — each group of 3 = 128px)
+float getBaseCX(float fi) {
+    float group = floor(fi / 3.0);
+    float off = fi - group * 3.0;
+    float base = group * 128.0;
+    if (off < 0.5) return base + 21.5;
+    if (off < 1.5) return base + 64.0;
+    return base + 106.5;
+}
+
+// Gradient type: 0=A, 1=B, 2=C
+float getType(float fi) {
+    return fi - floor(fi / 3.0) * 3.0;
+}
+
+// Vertical gradient with static stops per type
+vec3 colGrad(float t, float type) {
+    vec3 red    = vec3(0.976, 0.157, 0.129);
+    vec3 orange = vec3(0.988, 0.439, 0.129);
+    vec3 yellow = vec3(0.973, 0.839, 0.212);
+    vec3 white  = vec3(1.0);
+
+    float s1, s2, s3;
+    if (type < 0.5) {        // Type A
+        s1 = 0.48077; s2 = 0.67788; s3 = 1.0;
+    } else if (type < 1.5) { // Type B
+        s1 = 0.27885; s2 = 0.5625;  s3 = 0.87981;
+    } else {                  // Type C
+        s1 = 0.18269; s2 = 0.45673; s3 = 0.87981;
+    }
+
+    if (t < s1) return mix(red, orange, t / s1);
+    if (t < s2) return mix(orange, yellow, (t - s1) / (s2 - s1));
+    if (t < s3) return mix(yellow, white, (t - s2) / (s3 - s2));
+    return white;
+}
+
+// Mouse strength for column i
+float getMouseI(float fi) {
+    float baseCX = getBaseCX(fi);
+    float dist = length((u_mouse - vec2(baseCX, 540.0)) / u_res);
+    float mt = 1.0 - smoothstep(0.0, 0.65, dist);
+    return mt * mt * (3.0 - 2.0 * mt);
+}
+
+// Width breathing
+float getBreath(float fi) {
+    float phase = fi * 1.37 + fi * fi * 0.23;
+    return sin(u_time * 0.31 + phase) * 0.14
+         + sin(u_time * 0.53 + phase * 1.7 + 2.1) * 0.08
+         + sin(u_time * 0.17 + phase * 2.3 + 0.8) * 0.05;
+}
+
+// Height breathing
+float getHBreath(float fi) {
+    float phase = fi * 0.91 + fi * fi * 0.17;
+    return sin(u_time * 0.26 + phase) * 0.15
+         + sin(u_time * 0.43 + phase * 0.9 + 1.7) * 0.09
+         + sin(u_time * 0.15 + phase * 3.1 + 4.2) * 0.06;
+}
+
+// Width scale for column i
+float getWScale(float fi, float maxM) {
+    float mi = getMouseI(fi);
+    float breath = getBreath(fi);
+    float squeeze = maxM * (1.0 - mi) * 0.45;
+    return 1.0 + breath + mi * 0.9 - squeeze;
+}
+
+void main() {
+    vec2 pos = gl_FragCoord.xy;
+    pos.y = u_res.y - pos.y;
+
+    vec3 color = vec3(1.0); // white background
+
+    // Pass 1: find max mouse strength
+    float maxM = 0.0;
+    for (int i = 0; i < 45; i++) {
+        maxM = max(maxM, getMouseI(float(i)));
+    }
+
+    // Pass 2: total raw width for normalization
+    float totalRaw = 0.0;
+    for (int i = 0; i < 45; i++) {
+        totalRaw += getBaseW(float(i)) * getWScale(float(i), maxM);
+    }
+    float norm = 1920.0 / totalRaw;
+
+    // Pass 3: find which column and render
+    float cumX = 0.0;
+    bool found = false;
+    for (int i = 0; i < 45; i++) {
+        if (!found) {
+            float fi = float(i);
+            float sc = getWScale(fi, maxM);
+            float w = getBaseW(fi) * sc * norm;
+
+            if (pos.x < cumX + w) {
+                found = true;
+                float mi = getMouseI(fi);
+
+                // Vertical gradient t (0=top red, 1=bottom white)
+                float t = pos.y / u_res.y;
+
+                // Height breathing + mouse Y attraction
+                float hBreath = getHBreath(fi);
+                float mouseNY = u_mouse.y / u_res.y;
+                float yStretch = 1.0 + hBreath + mi * 0.4;
+                t = t / max(yStretch, 0.4);
+
+                // Auto drift per column
+                float phase = fi * 1.37 + fi * fi * 0.23;
+                float autoDrift = sin(u_time * 0.25 + phase) * 0.06
+                                + sin(u_time * 0.4 + phase * 1.7) * 0.04;
+
+                // Mouse pushes gradient along vertical axis
+                float mouseDir = (mouseNY - t) * mi * 0.35;
+                t = clamp(t + autoDrift + mouseDir, 0.0, 1.0);
+
+                float type = getType(fi);
+                color = colGrad(t, type);
+            }
+            cumX += w;
+        }
+    }
+
+    gl_FragColor = vec4(color, 1.0);
+}
+`;
+
+function createShader(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(s));
+        return null;
+    }
+    return s;
+}
+
+const vs = createShader(gl.VERTEX_SHADER, vsrc);
+const fs = createShader(gl.FRAGMENT_SHADER, fsrc);
+const prog = gl.createProgram();
+gl.attachShader(prog, vs);
+gl.attachShader(prog, fs);
+gl.linkProgram(prog);
+
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(prog));
+}
+
+gl.useProgram(prog);
+
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+
+const aPos = gl.getAttribLocation(prog, 'a_pos');
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+const uRes = gl.getUniformLocation(prog, 'u_res');
+const uTime = gl.getUniformLocation(prog, 'u_time');
+const uMouse = gl.getUniformLocation(prog, 'u_mouse');
+
+gl.uniform2f(uRes, canvas.width, canvas.height);
+gl.viewport(0, 0, canvas.width, canvas.height);
+
+// Two-stage mouse smoothing
+let mouseX = canvas.width * 0.5;
+let mouseY = canvas.height * 0.5;
+let midX = mouseX, midY = mouseY;
+let targetX = mouseX, targetY = mouseY;
+let mouseOnCanvas = false;
+
+canvas.addEventListener('mousemove', (e) => {
+    mouseOnCanvas = true;
+    const rect = canvas.getBoundingClientRect();
+    targetX = (e.clientX - rect.left) / rect.width * canvas.width;
+    targetY = (e.clientY - rect.top) / rect.height * canvas.height;
+});
+
+canvas.addEventListener('mouseleave', () => {
+    mouseOnCanvas = false;
+});
+
+function getWanderPos(t) {
+    const cx = canvas.width * 0.5;
+    const cy = canvas.height * 0.5;
+    const rx = canvas.width * 0.4;
+    const ry = canvas.height * 0.4;
+    return {
+        x: cx + Math.sin(t * 0.23) * rx * 0.6 + Math.sin(t * 0.41 + 1.3) * rx * 0.3,
+        y: cy + Math.sin(t * 0.19 + 2.0) * ry * 0.6 + Math.cos(t * 0.37 + 0.7) * ry * 0.3
+    };
+}
+
+function render(time) {
+    const t = time * 0.001;
+
+    if (!mouseOnCanvas) {
+        const wander = getWanderPos(t);
+        targetX = wander.x;
+        targetY = wander.y;
+    }
+
+    midX += (targetX - midX) * 0.04;
+    midY += (targetY - midY) * 0.04;
+    mouseX += (midX - mouseX) * 0.035;
+    mouseY += (midY - mouseY) * 0.035;
+
+    gl.uniform1f(uTime, t);
+    gl.uniform2f(uMouse, mouseX, mouseY);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+}
+
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
