@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gradient Illustration</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; display: flex; justify-content: center; align-items: center; min-height: 100vh; overflow: hidden; }
+canvas { width: 70vw; height: 39.8vw; max-height: 70vh; max-width: 123.11vh; border-radius: 24px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl');
+if (!gl) alert('WebGL not supported');
+
+canvas.width = 1917;
+canvas.height = 1090;
+
+const vsrc = `
+attribute vec2 a_pos;
+void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
+`;
+
+const fsrc = `
+precision highp float;
+uniform vec2 u_res;
+uniform float u_time;
+uniform vec2 u_mouse;
+
+float sdfBox(vec2 p, vec2 b, float rTL, float rTR, float rBL, float rBR) {
+    p.y = -p.y;
+    vec4 r = vec4(rTR, rBR, rTL, rBL);
+    r.xy = (p.x > 0.0) ? r.xy : r.zw;
+    r.x = (p.y > 0.0) ? r.x : r.y;
+    vec2 q = abs(p) - b + r.x;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r.x;
+}
+
+// Gradient colors
+const vec3 pink = vec3(0.933, 0.859, 0.937);
+const vec3 lightBlue = vec3(0.059, 0.667, 0.890);
+const vec3 darkBlue = vec3(0.055, 0.451, 0.773);
+const vec3 medBlue = vec3(0.055, 0.620, 0.867);
+const vec3 lavender = vec3(0.886, 0.851, 0.945);
+
+vec3 pillGrad(float t) {
+    if (t < 0.26442) return mix(pink, lightBlue, t / 0.26442);
+    if (t < 0.50962) return mix(lightBlue, darkBlue, (t - 0.26442) / (0.50962 - 0.26442));
+    if (t < 0.77885) return mix(darkBlue, medBlue, (t - 0.50962) / (0.77885 - 0.50962));
+    return mix(medBlue, lavender, clamp((t - 0.77885) / (1.0 - 0.77885), 0.0, 1.0));
+}
+
+vec3 archGrad(float t) {
+    if (t < 0.48558) return mix(darkBlue, lightBlue, t / 0.48558);
+    return mix(lightBlue, pink, clamp((t - 0.48558) / (1.0 - 0.48558), 0.0, 1.0));
+}
+
+vec3 overlayGrad(float t) {
+    if (t < 0.26442) return mix(pink, lightBlue, t / 0.26442);
+    return mix(lightBlue, darkBlue, clamp((t - 0.26442) / (1.0 - 0.26442), 0.0, 1.0));
+}
+
+// Animated gradient: shifts stops linearly, no rotation
+vec3 animGrad(vec2 pos, vec2 origin, vec2 size, vec2 shapeCenter, int gradType, float flip) {
+    // Vertical gradient t stays purely top-to-bottom
+    float t = clamp((pos.y - origin.y) / size.y, 0.0, 1.0);
+
+    // Auto-oscillate: slide the gradient up and down, phased per shape
+    float phase = shapeCenter.x * 0.003 + shapeCenter.y * 0.004;
+    float stopShift = sin(u_time * 0.3 + phase) * 0.15
+                    + sin(u_time * 0.5 + phase * 1.7) * 0.1;
+
+    // Mouse: push gradient toward or away from cursor
+    vec2 toMouse = u_mouse - shapeCenter;
+    float mouseDist = length(toMouse) / length(u_res);
+    float mouseStrength = 1.0 - smoothstep(0.0, 0.5, mouseDist);
+
+    // Mouse pushes the gradient along the vertical axis
+    float mouseDir = (u_mouse.y - pos.y) / size.y;
+    float mouseShift = mouseStrength * 0.35 * mouseDir;
+
+    t = clamp(t + stopShift + mouseShift, 0.0, 1.0);
+
+    vec3 col;
+    if (gradType == 0) {
+        col = pillGrad(t);
+    } else if (gradType == 1) {
+        col = archGrad(flip > 0.5 ? 1.0 - t : t);
+    } else {
+        col = overlayGrad(flip > 0.5 ? 1.0 - t : t);
+    }
+
+    // Mouse proximity brightening — clean linear falloff
+    float spotDist = length(pos - u_mouse);
+    float spot = mouseStrength * (1.0 - smoothstep(0.0, 350.0, spotDist));
+    col = mix(col, lavender, spot * 0.35);
+
+    return col;
+}
+
+void main() {
+    vec2 pos = gl_FragCoord.xy;
+    pos.y = u_res.y - pos.y;
+
+    vec3 color = vec3(0.055, 0.510, 0.804);
+
+    for (int col = 0; col < 3; col++) {
+        float cx = float(col) * 639.0;
+
+        // Middle row: pills
+        {
+            vec2 o = vec2(cx, 363.0);
+            vec2 s = vec2(639.0, 365.0);
+            float r = 182.5;
+            vec2 center = o + s * 0.5;
+            float d = sdfBox(pos - center, s * 0.5, r, r, r, r);
+            float a = 1.0 - smoothstep(-1.0, 1.0, d);
+            if (a > 0.0) {
+                color = mix(color, animGrad(pos, o, s, center, 0, 0.0), a);
+            }
+        }
+
+        // Bottom row: arch
+        {
+            vec2 o = vec2(cx, 728.0);
+            vec2 s = vec2(639.0, 362.0);
+            vec2 center = o + s * 0.5;
+            float d = sdfBox(pos - center, s * 0.5, 180.0, 180.0, 0.0, 0.0);
+            float a = 1.0 - smoothstep(-1.0, 1.0, d);
+            if (a > 0.0) {
+                color = mix(color, animGrad(pos, o, s, center, 1, 0.0), a);
+            }
+        }
+
+        // Bottom row: half-circle overlay
+        {
+            vec2 o = vec2(cx, 728.0);
+            vec2 s = vec2(365.0, 362.0);
+            float r = 182.5;
+            vec2 center = o + s * 0.5;
+            float d = sdfBox(pos - center, s * 0.5, r, r, 0.0, 0.0);
+            float a = 1.0 - smoothstep(-1.0, 1.0, d);
+            if (a > 0.0) {
+                color = mix(color, animGrad(pos, o, s, center, 2, 0.0), a);
+            }
+        }
+
+        // Top row: flipped arch
+        {
+            vec2 o = vec2(cx, 1.0);
+            vec2 s = vec2(639.0, 362.0);
+            vec2 center = o + s * 0.5;
+            float d = sdfBox(pos - center, s * 0.5, 0.0, 0.0, 180.0, 180.0);
+            float a = 1.0 - smoothstep(-1.0, 1.0, d);
+            if (a > 0.0) {
+                color = mix(color, animGrad(pos, o, s, center, 1, 1.0), a);
+            }
+        }
+
+        // Top row: flipped half-circle overlay
+        {
+            vec2 o = vec2(cx, 1.0);
+            vec2 s = vec2(365.0, 362.0);
+            float r = 182.5;
+            vec2 center = o + s * 0.5;
+            float d = sdfBox(pos - center, s * 0.5, 0.0, 0.0, r, r);
+            float a = 1.0 - smoothstep(-1.0, 1.0, d);
+            if (a > 0.0) {
+                color = mix(color, animGrad(pos, o, s, center, 2, 1.0), a);
+            }
+        }
+    }
+
+    gl_FragColor = vec4(color, 1.0);
+}
+`;
+
+function createShader(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(s));
+        return null;
+    }
+    return s;
+}
+
+const vs = createShader(gl.VERTEX_SHADER, vsrc);
+const fs = createShader(gl.FRAGMENT_SHADER, fsrc);
+const prog = gl.createProgram();
+gl.attachShader(prog, vs);
+gl.attachShader(prog, fs);
+gl.linkProgram(prog);
+
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(prog));
+}
+
+gl.useProgram(prog);
+
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+
+const aPos = gl.getAttribLocation(prog, 'a_pos');
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+const uRes = gl.getUniformLocation(prog, 'u_res');
+const uTime = gl.getUniformLocation(prog, 'u_time');
+const uMouse = gl.getUniformLocation(prog, 'u_mouse');
+
+gl.uniform2f(uRes, canvas.width, canvas.height);
+gl.viewport(0, 0, canvas.width, canvas.height);
+
+let mouseX = canvas.width * 0.5;
+let mouseY = canvas.height * 0.5;
+let targetX = mouseX;
+let targetY = mouseY;
+let mouseOnCanvas = false;
+
+canvas.addEventListener('mousemove', (e) => {
+    mouseOnCanvas = true;
+    const rect = canvas.getBoundingClientRect();
+    targetX = (e.clientX - rect.left) / rect.width * canvas.width;
+    targetY = (e.clientY - rect.top) / rect.height * canvas.height;
+});
+
+canvas.addEventListener('mouseleave', () => {
+    mouseOnCanvas = false;
+});
+
+function getWanderPos(t) {
+    const cx = canvas.width * 0.5;
+    const cy = canvas.height * 0.5;
+    const rx = canvas.width * 0.4;
+    const ry = canvas.height * 0.4;
+    return {
+        x: cx + Math.sin(t * 0.23) * rx * 0.6 + Math.sin(t * 0.41 + 1.3) * rx * 0.3 + Math.sin(t * 0.67 + 4.1) * rx * 0.1,
+        y: cy + Math.sin(t * 0.19 + 2.0) * ry * 0.6 + Math.cos(t * 0.37 + 0.7) * ry * 0.3 + Math.sin(t * 0.53 + 3.2) * ry * 0.1
+    };
+}
+
+function render(time) {
+    const t = time * 0.001;
+
+    if (!mouseOnCanvas) {
+        const wander = getWanderPos(t);
+        targetX = wander.x;
+        targetY = wander.y;
+    }
+
+    const lerp = mouseOnCanvas ? 0.08 : 0.03;
+    mouseX += (targetX - mouseX) * lerp;
+    mouseY += (targetY - mouseY) * lerp;
+
+    gl.uniform1f(uTime, t);
+    gl.uniform2f(uMouse, mouseX, mouseY);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+}
+
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
